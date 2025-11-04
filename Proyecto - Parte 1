@@ -1,0 +1,529 @@
+library(readxl)
+library(dplyr)
+library(janitor)  # Para limpiar nombres de columnas
+
+
+###############################CARGA DE FUENTES#######################################################
+##Fuente 1
+# Ruta del directorio
+ruta <- "D:/Desktop/Maestría Ciencias de la Computación/IV TRIMESTRE/Introducción a la minería de datos/Proyecto/Repositorio/FUENTE1-INE-HECHOS-DELICTIVOS/DELITOS-CONTRA-LIBERTAD-PNC"
+archivos <- list.files(path = ruta, pattern = "\\.xlsx$", full.names = TRUE)
+
+# Función para leer y renombrar columnas con prefijo del archivo
+leer_con_prefijo <- function(archivo) {
+  df <- read_excel(archivo, skip = 2)
+  df <- clean_names(df)  # Limpia nombres como "por_tipo_de_delito", etc.
+  if (!"ano" %in% names(df)) {
+    names(df)[1] <- "ano"
+  }
+  prefijo <- tools::file_path_sans_ext(basename(archivo))
+  otras_cols <- setdiff(names(df), "ano")
+  names(df)[names(df) != "ano"] <- paste0(prefijo, "_", otras_cols)
+  return(df)
+}
+
+
+# Leer todos los archivos
+lista_datos <- lapply(archivos, leer_con_prefijo)
+
+# Unir por 'ano'
+datos_fuente1 <- Reduce(function(x, y) full_join(x, y, by = "ano"), lista_datos)
+
+# Verificar resultado
+glimpse(datos_fuente1)
+
+ver_tabla <- function(data, filas = 10) {
+  if (!requireNamespace("DT", quietly = TRUE)) {
+    install.packages("DT")
+  }
+  library(DT)
+  
+  datatable(
+    data,
+    options = list(pageLength = filas, scrollX = TRUE),
+    rownames = FALSE
+  )
+}
+ver_tabla(datos_fuente1)
+
+
+##Fuente 2
+library(readxl)
+library(dplyr)
+library(janitor)
+
+# Ruta del directorio FUENTE2
+ruta_fuente2 <- "D:/Desktop/Maestría Ciencias de la Computación/IV TRIMESTRE/Introducción a la minería de datos/Proyecto/Repositorio/FUENTE2-MEDICO-LEGAL-INACIF"
+
+# Listar todos los archivos Excel
+archivos_fuente2 <- list.files(path = ruta_fuente2, pattern = "\\.xlsx$", full.names = TRUE)
+
+# Función para leer, limpiar y renombrar columnas si es necesario
+leer_fuente2 <- function(archivo) {
+  df <- read_excel(archivo)
+  df <- clean_names(df)  # Limpia nombres: sin tildes, espacios, mayúsculas
+  
+  # Si el archivo tiene eva_ml y sexo_per_eva, renombrarlos para unificar
+  if ("eva_ml" %in% names(df)) {
+    df <- df %>% rename(clasif_eval = eva_ml)
+  }
+  if ("sexo_per_eva" %in% names(df)) {
+    df <- df %>% rename(sexo_per = sexo_per_eva)
+  }
+  
+  # Agregar columna con nombre del archivo
+  df <- df %>% mutate(fuente = basename(archivo))
+  
+  return(df)
+}
+
+# Leer y apilar todos los archivos
+datos_fuente2 <- bind_rows(lapply(archivos_fuente2, leer_fuente2))
+
+# Verificar estructura
+glimpse(datos_fuente2)
+
+
+
+## Fuente 3
+library(readxl)
+library(dplyr)
+library(janitor)
+library(stringi)
+library(stringr)
+
+# Ruta del directorio FUENTE3
+ruta_fuente3 <- "D:/Desktop/Maestría Ciencias de la Computación/IV TRIMESTRE/Introducción a la minería de datos/Proyecto/Repositorio/FUENTE3-MEDICO-NECROPCIA-INACIF"
+
+# Listar todos los archivos Excel
+archivos_fuente3 <- list.files(path = ruta_fuente3, pattern = "\\.xlsx$", full.names = TRUE)
+
+# Extraer nombres de columna por archivo
+nombres_df <- lapply(archivos_fuente3, function(archivo) {
+  nombres <- names(read_excel(archivo, n_max = 0))
+  data.frame(
+    archivo = basename(archivo),
+    columna = nombres,
+    stringsAsFactors = FALSE
+  )
+}) %>% bind_rows()
+
+# Mostrar como tabla
+print(nombres_df)
+
+# Función para normalizar nombres de columna
+normalizar_nombres <- function(nombres) {
+  nombres %>%
+    stri_trans_general("Latin-ASCII") %>%       # Elimina tildes
+    str_replace_all("ñ", "n") %>%               # Reemplaza ñ por n
+    str_replace_all("[\\p{P}-[_]]+", "") %>%    # Elimina puntuación excepto _
+    str_replace_all("\\s+", "_") %>%            # Reemplaza espacios por _
+    tolower()                                   # Minúsculas
+}
+
+# Función para renombrar columnas específicas
+unificar_nombres <- function(nombres) {
+  reemplazos <- c(
+    "causa_muerte" = "eva_mn",
+    "ano_ing" = "ano_ocu",
+    "mes_ing" = "mes_ocu",
+    "dia_ing" = "dia_ocu",
+    "dia_sem_ing" = "dia_sem_ocu",
+    "sexo_per" = "sexo_per_eva"
+  )
+  ifelse(nombres %in% names(reemplazos), reemplazos[nombres], nombres)
+}
+
+# Función para leer y normalizar columnas, excluyendo g_edad_ninez_adolescencia
+leer_fuente3 <- function(archivo) {
+  df <- read_excel(archivo)
+  
+  nombres_originales <- names(df)
+  nombres_normalizados <- normalizar_nombres(nombres_originales)
+  
+  # Asignar nombres normalizados temporalmente
+  names(df) <- nombres_normalizados
+  
+  # Excluir columna ya normalizada
+  if ("g_edad_ninez_adolescencia" %in% names(df)) {
+    df <- df %>% select(-g_edad_ninez_adolescencia)
+    nombres_normalizados <- names(df)  # Actualizar nombres tras exclusión
+  }
+  
+  # Renombrar según mapeo
+  nombres_unificados <- unificar_nombres(nombres_normalizados)
+  
+  # Verificar duplicados post-renombramiento
+  if (any(duplicated(nombres_unificados))) {
+    duplicados <- nombres_unificados[duplicated(nombres_unificados)]
+    warning("Columnas duplicadas tras renombrar en ", basename(archivo), ": ",
+            paste(duplicados, collapse = ", "))
+    
+    nombres_unificados <- make.unique(nombres_unificados, sep = "_dup")
+  }
+  
+  names(df) <- nombres_unificados
+  
+  # Agregar columna de procedencia
+  df <- df %>% mutate(fuente = basename(archivo))
+  
+  return(df)
+}
+
+# Leer todos los archivos
+lista_fuente3 <- lapply(archivos_fuente3, leer_fuente3)
+
+# Unificar columnas presentes en al menos uno de los archivos
+todas_columnas <- unique(unlist(lapply(lista_fuente3, names)))
+
+# Alinear columnas en todos los dataframes
+alinear_columnas <- function(df, columnas_objetivo) {
+  faltantes <- setdiff(columnas_objetivo, names(df))
+  for (col in faltantes) {
+    df[[col]] <- NA
+  }
+  df <- df[, columnas_objetivo]
+  return(df)
+}
+
+# Aplicar alineación
+datos_fuente3 <- bind_rows(lapply(lista_fuente3, function(df) alinear_columnas(df, todas_columnas)))
+
+# Verificar estructura final
+glimpse(datos_fuente3)
+
+
+##FUENTE 4
+library(readxl)
+library(dplyr)
+
+# Ruta del directorio FUENTE4
+ruta_fuente4 <- "D:/Desktop/Maestría Ciencias de la Computación/IV TRIMESTRE/Introducción a la minería de datos/Proyecto/Repositorio/FUENTE4-MEDICO-EXHUMACION-INACIF"
+
+# Listar todos los archivos Excel
+archivos_fuente4 <- list.files(path = ruta_fuente4, pattern = "\\.xlsx$", full.names = TRUE)
+
+# Extraer nombres de columna por archivo
+titulos_fuente4 <- lapply(archivos_fuente4, function(archivo) {
+  nombres <- names(read_excel(archivo, n_max = 0))  # Solo lee encabezados
+  data.frame(
+    archivo = basename(archivo),
+    columna = nombres,
+    stringsAsFactors = FALSE
+  )
+}) %>% bind_rows()
+
+# Mostrar resultados
+titulos_fuente4 %>%
+  group_by(archivo) %>%
+  summarise(titulos = paste(columna, collapse = ", ")) %>%
+  print(width = Inf)
+
+
+# Función para normalizar nombres de columna
+normalizar_nombres <- function(nombres) {
+  nombres %>%
+    stri_trans_general("Latin-ASCII") %>%       # Elimina tildes
+    str_replace_all("ñ", "n") %>%               # Reemplaza ñ por n
+    str_replace_all("[\\p{P}-[_]]+", "") %>%    # Elimina puntuación excepto _
+    str_replace_all("\\s+", "_") %>%            # Reemplaza espacios por _
+    tolower()
+}
+
+# Leer encabezados normalizados por archivo
+encabezados_fuente4 <- lapply(archivos_fuente4, function(archivo) {
+  nombres <- names(read_excel(archivo, n_max = 0))
+  normalizados <- normalizar_nombres(nombres)
+  return(normalizados)
+})
+
+# Detectar columnas comunes entre todos los archivos
+columnas_comunes <- Reduce(intersect, encabezados_fuente4)
+
+# Función para leer solo columnas comunes
+leer_fuente4 <- function(archivo, columnas_objetivo) {
+  df <- read_excel(archivo)
+  names(df) <- normalizar_nombres(names(df))
+  df <- df %>% select(any_of(columnas_objetivo))
+  df <- df %>% mutate(fuente = basename(archivo))
+  return(df)
+}
+
+# Leer todos los archivos con columnas comunes
+datos_fuente4 <- lapply(archivos_fuente4, leer_fuente4, columnas_objetivo = columnas_comunes) %>%
+  bind_rows()
+
+# Verificar estructura final
+glimpse(datos_fuente4)
+
+################################################## APRIORI #######################################################
+library(arules)
+library(dplyr)
+library(tidyr)
+library(purrr)
+
+search()  # Verifica los entornos cargados
+ls()      # Lista los objetos en tu entorno actual
+
+# 1️⃣ Estandarizar nombres de columna de año
+estandarizar_año <- function(df) {
+  posibles_nombres <- c("ano", "año", "ano_ocu", "ANIO", "anio", "Ano", "ANO")
+  nombre_encontrado <- intersect(posibles_nombres, names(df))
+  
+  if (length(nombre_encontrado) == 1) {
+    df <- df %>% rename(Año = all_of(nombre_encontrado))
+  } else if (length(nombre_encontrado) > 1) {
+    warning("Se encontraron múltiples columnas de año: ", paste(nombre_encontrado, collapse = ", "))
+    df <- df %>% rename(Año = all_of(nombre_encontrado[1]))  # toma la primera
+  } else {
+    stop("No se encontró ninguna columna de año reconocible.")
+  }
+  
+  return(df)
+}
+
+#Aplicación a fuentes
+datos_fuente1 <- estandarizar_año(datos_fuente1)
+datos_fuente2 <- estandarizar_año(datos_fuente2)
+datos_fuente3 <- estandarizar_año(datos_fuente3)
+datos_fuente4 <- estandarizar_año(datos_fuente4)
+
+names(datos_fuente1)
+names(datos_fuente2)
+names(datos_fuente3)
+names(datos_fuente4)
+
+#  Función para preparar cada fuente
+prep_fuente <- function(df, nombre_fuente) {
+  df %>%
+    mutate(across(everything(), as.character)) %>%  # Convertir todo a texto
+    pivot_longer(-Año, names_to = "Variable", values_to = "Valor") %>%
+    mutate(Item = paste(nombre_fuente, Variable, Valor, sep = "_")) %>%
+    group_by(Año) %>%
+    summarise(Items = list(unique(Item)), .groups = "drop")
+}
+
+#  Aplicar la función a cada fuente
+f1 <- prep_fuente(datos_fuente1, "f1")
+f2 <- prep_fuente(datos_fuente2, "f2")
+f3 <- prep_fuente(datos_fuente3, "f3")
+f4 <- prep_fuente(datos_fuente4, "f4")
+
+#  Unir por año
+transacciones <- reduce(list(f1, f2, f3, f4), full_join, by = "Año")
+
+# Combinar todas las listas de ítems
+transacciones <- transacciones %>%
+  mutate(Todos = pmap(list(Items.x, Items.y, Items.x.x, Items.y.y),
+                      ~unique(unlist(list(..1, ..2, ..3, ..4))))) %>%
+  select(Año, Todos)
+
+#  Limpiar y convertir a transacciones
+trans_clean <- lapply(transacciones$Todos, function(x) {
+  x <- unlist(x)
+  x <- as.character(x)
+  unique(x)
+})
+trans_list <- as(trans_clean, "transactions")
+
+# Aplicar Apriori
+reglas <- apriori(trans_list,
+                  parameter = list(supp = 0.8, conf = 0.8, minlen = 2))
+
+#  Ver resultados
+inspect(reglas)
+
+library(arulesViz)
+plot(reglas, method = "graph", engine = "htmlwidget")
+subset(reglas, lift > 1.5)
+
+length(reglas)         # ¿Cuántas reglas hay?
+summary(reglas)        # ¿Qué soporte/confianza tienen?
+
+
+
+##Aplicando apriori por cada fuente#################
+library(arules)
+library(dplyr)
+library(tidyr)
+
+prep_transacciones <- function(df, nombre_fuente) {
+  df %>%
+    mutate(across(everything(), as.character)) %>%
+    pivot_longer(-Año, names_to = "Variable", values_to = "Valor") %>%
+    mutate(Item = paste(nombre_fuente, Variable, Valor, sep = "_")) %>%
+    group_by(Año) %>%
+    summarise(Items = list(unique(Item)), .groups = "drop") %>%
+    pull(Items) %>%
+    lapply(function(x) unique(as.character(unlist(x)))) %>%
+    as("transactions")
+}
+library(arulesViz)
+
+
+
+trans_f1 <- prep_transacciones(datos_fuente1, "f1")
+reglas_f1 <- apriori(trans_f1, parameter = list(supp = 0.5, conf = 0.9))
+
+trans_f2 <- prep_transacciones(datos_fuente2, "f2")
+#itemFrequencyPlot(trans_f2, topN = 20)
+#summary(trans_f2)
+reglas_f2 <- apriori(trans_f2, parameter = list(supp = 0.5, conf = 0.9))
+
+trans_f3 <- prep_transacciones(datos_fuente3, "f3")
+reglas_f3 <- apriori(trans_f3, parameter = list(supp = 0.5, conf = 0.9))
+
+trans_f4 <- prep_transacciones(datos_fuente4, "f4")
+reglas_f4 <- apriori(trans_f4, parameter = list(supp = 0.5, conf = 0.9))
+
+inspect(head(reglas_f1, 5))
+inspect(head(reglas_f2, 5))
+inspect(head(reglas_f3, 5))
+inspect(head(reglas_f4, 5))
+
+#################################ALGORITMO FP-GROWTH##############################
+library(fim4r)
+
+##F1
+campos_fp1 <- c("Año", "DELITOS-CONTRA-LIBERTAD-Por  tipo_total", "DELITOS-CONTRA-LIBERTAD-Por  tipo_desaparecidos", "DELITOS-CONTRA-LIBERTAD-Por  tipo_secuestros",
+                "DELITOS-CONTRA-LIBERTAD-Por grupo_total","DELITOS-CONTRA-LIBERTAD-Por grupo_menor_de_15","DELITOS-CONTRA-LIBERTAD-Por grupo_x15_19","DELITOS-CONTRA-LIBERTAD-Por grupo_x20_24","DELITOS-CONTRA-LIBERTAD-Por grupo_x25_29","DELITOS-CONTRA-LIBERTAD-Por grupo_x30_34","DELITOS-CONTRA-LIBERTAD-Por grupo_x35_39",
+                "DELITOS-CONTRA-LIBERTAD-Por grupo_x40_44","DELITOS-CONTRA-LIBERTAD-Por grupo_x45_49","DELITOS-CONTRA-LIBERTAD-Por grupo_x50_54","DELITOS-CONTRA-LIBERTAD-Por grupo_x55_59","DELITOS-CONTRA-LIBERTAD-Por grupo_x60_y_mas",
+                "DELITOS-CONTRA-LIBERTAD-Por sexo_total","DELITOS-CONTRA-LIBERTAD-Por sexo_hombre","DELITOS-CONTRA-LIBERTAD-Por sexo_mujer")
+# Seleccionar columnas relevantes
+data_fp1 <- datos_fuente1[, campos_fp1]
+
+
+# Asegurarse de que todos los campos sean texto
+data_fp1[] <- lapply(data_fp1, as.character)
+
+# Aplicar FP-Growth
+reglas_fp1 <- fim4r(data_fp1, method = "fpgrowth", target = "rules", supp = 0.2, conf = 0.5)
+
+# Convertir a data.frame para inspección
+rf1 <- as(reglas_fp1, "data.frame")
+head(rf1)
+
+##F2
+campos_fp2 <- c("Año", "mes_ocu", "dia_ocu", "dia_sem_ocu", "depto_ocu", "edad_per", "g_edad_60ymas", "g_edad_80ymas", "edad_quinquenales", "menor_mayor", "sexo_per", "clasif_eval")
+
+# Seleccionar columnas relevantes
+data_fp2 <- datos_fuente2[, campos_fp2]
+
+# Asegurarse de que todos los campos sean texto
+data_fp2[] <- lapply(data_fp2, as.character)
+
+# Aplicar FP-Growth
+reglas_fp2 <- fim4r(data_fp2, method = "fpgrowth", target = "rules", supp = 0.2, conf = 0.5)
+
+# Convertir a data.frame para inspección
+rf2 <- as(reglas_fp2, "data.frame")
+head(rf2)
+
+
+
+##F3
+campos_fp3 <- c("Año", "mes_ocu", "dia_ocu", "dia_sem_ocu", "depto_ocu", "mupio_ocu", "edad_per", "g_edad_60ymas", "g_edad_80ymas", "edad_quinquenales", "menor_mayor", "sexo_per_eva", "eva_mn")
+
+# Seleccionar columnas relevantes
+data_fp3 <- datos_fuente3[, campos_fp3]
+
+# Asegurarse de que todos los campos sean texto
+data_fp3[] <- lapply(data_fp3, as.character)
+
+# Aplicar FP-Growth
+reglas_fp3 <- fim4r(data_fp3, method = "fpgrowth", target = "rules", supp = 0.2, conf = 0.5)
+
+# Convertir a data.frame para inspección
+rf3 <- as(reglas_fp3, "data.frame")
+head(rf3)
+
+##F4
+campos_fp4 <- c("Año", "mes_ocu", "dia_ocu", "dia_sem_ocu", "depto_ocu")
+
+# Seleccionar columnas relevantes
+data_fp4 <- datos_fuente4[, campos_fp4]
+
+# Asegurarse de que todos los campos sean texto
+data_fp4[] <- lapply(data_fp4, as.character)
+
+# Aplicar FP-Growth
+reglas_fp4 <- fim4r(data_fp4, method = "fpgrowth", target = "rules", supp = 0.2, conf = 0.5)
+
+# Convertir a data.frame para inspección
+rf4 <- as(reglas_fp4, "data.frame")
+head(rf4)
+
+
+##################################K-MEANS##############################################################################
+############################FUENTE2#############################
+# Paso 1: Seleccionar variables
+campos_fp2 <- c("Año", "mes_ocu", "dia_ocu", "dia_sem_ocu", "depto_ocu", "edad_per", "g_edad_60ymas", "g_edad_80ymas", "edad_quinquenales", "menor_mayor", "sexo_per", "clasif_eval")
+data_fp2 <- datos_fuente2[, campos_fp2]
+
+data_fp2[] <- lapply(data_fp2, function(x) {
+  if (is.character(x) || is.factor(x)) {
+    as.numeric(as.factor(x))
+  } else {
+    as.numeric(x)
+  }
+})
+
+data_fp2 <- na.omit(data_fp2)
+data_fp2_scaled <- scale(data_fp2)
+
+set.seed(123)
+km3_fp2 <- kmeans(data_fp2_scaled, centers = 3)
+data_fp2$cluster <- factor(km3_fp2$cluster)
+
+centroides_fp2 <- as.data.frame(km3_fp2$centers)
+centroides_fp2$cluster <- factor(1:3)
+
+ggplot(data_fp2, aes(x = edad_per, y = clasif_eval, color = cluster)) +
+  geom_point(alpha = 0.7, size = 3) +
+  stat_ellipse(type = "norm", level = 0.95, aes(fill = cluster), geom = "polygon", alpha = 0.2) +
+  geom_point(data = centroides_fp2, aes(x = edad_per, y = clasif_eval),
+             color = "black", shape = 17, size = 5, stroke = 1.5) +
+  labs(title = "Edad vs Evaluación Médico Legal",
+       x = "Edad", y = "Evaluación Médico Legal") +
+  theme_minimal()
+
+
+############################FUENTE4#############################
+library(ggplot2)
+library(dplyr)
+
+# Paso 1: Seleccionar variables
+campos_cluster <- c("dia_sem_ocu", "depto_ocu", "mes_ocu", "Año", "dia_ocu")
+data_num <- datos_fuente4[, campos_cluster]
+
+# Paso 2: Convertir a numérico si es necesario
+data_num[] <- lapply(data_num, function(x) {
+  if (is.character(x) || is.factor(x)) {
+    as.numeric(as.factor(x))
+  } else {
+    as.numeric(x)
+  }
+})
+
+# Paso 3: Eliminar NAs y escalar
+data_num <- na.omit(data_num)
+data_scaled <- scale(data_num)
+
+# Paso 4: Aplicar K-Means con 3 clústeres
+set.seed(123)
+km <- kmeans(data_scaled, centers = 4)
+data_num$cluster <- factor(km$cluster)
+
+# Paso 5: Centroides originales
+centroides <- as.data.frame(km$centers)
+centroides$cluster <- factor(1:4)
+
+# Paso 6: Graficar usando mes_ocu vs depto_ocu
+ggplot(data_num, aes(x = dia_sem_ocu, y = depto_ocu, color = cluster)) +
+  geom_point(alpha = 0.7, size = 3) +
+  stat_ellipse(type = "norm", level = 0.95, aes(fill = cluster), geom = "polygon", alpha = 0.2) +
+  geom_point(data = centroides, aes(x = dia_sem_ocu, y = depto_ocu),
+             color = "black", shape = 17, size = 5, stroke = 1.5) +
+  labs(title = "Clústeres K-Means: Dia de semana vs Departamento",
+       x = "Mes de ocurrencia", y = "Departamento de ocurrencia") +
+  theme_minimal()
