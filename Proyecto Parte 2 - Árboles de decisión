@@ -1,0 +1,156 @@
+
+```
+##PREDICCIONES POR ÁRBOL DE DECISIÓN
+####Situación 1
+```{r}
+library(rpart)
+library(rpart.plot)
+
+modelo_f2 <- rpart(
+  formula = clasif_eval ~ sexo_per + dia_sem_ocu + depto_ocu + g_edad_80ymas,
+  data = datos_fuente2,
+  method = "class"
+)
+
+rpart.plot(modelo_f2)
+```
+
+
+####Situación 2
+```{r}
+
+
+# Filtrar casos válidos
+tabla_filtrada <- datos_fuente2 %>%
+  filter(clasif_eval >= 21 & clasif_eval <= 30,
+         dia_ocu == 3,
+         edad_quinquenales < 900,
+         depto_ocu < 900)
+
+# Convertir clasif_eval a factor para clasificación multiclase
+tabla_filtrada$clasif_eval <- as.factor(tabla_filtrada$clasif_eval)
+
+# Árbol de decisión
+modelo_clasif_eval <- rpart(
+  formula = clasif_eval ~ edad_quinquenales + depto_ocu + sexo_per,
+  data = tabla_filtrada,
+  method = "class"
+)
+
+# Visualización con paleta adecuada
+rpart.plot(
+  modelo_clasif_eval,
+  box.palette = "RdYlGn",       
+  type = 2,                    # Etiquetas en los nodos
+  extra = 104,                 # Muestra clase dominante y porcentaje
+  under = TRUE,                # Muestra condiciones debajo del nodo
+  faclen = 0,                  # Muestra etiquetas completas
+  main = "Árbol de decisión: Clasificación médico legal (día miércoles)"
+)
+```
+
+####Situación 3
+```{r}
+campos_cluster <- c("eva_mn", "sexo_per_eva", "g_edad_80ymas", "depto_ocu", "dia_sem_ocu","mes_ocu")
+data_fp3 <- datos_fuente3[, campos_cluster]
+
+# Convertir a numérico si faltara
+data_fp3[] <- lapply(data_fp3, function(x) {
+  if (is.character(x) || is.factor(x)) {
+    as.numeric(as.factor(x))
+  } else {
+    as.numeric(x)
+  }
+})
+
+# Filtrar valores ignorados y NA
+data_fp3 <- data_fp3 %>%
+  filter(eva_mn < 900, depto_ocu < 90) %>%
+  na.omit()
+
+set.seed(123)
+data_scaled <- scale(data_fp3)
+
+km_fp3 <- kmeans(data_scaled, centers = 4)
+data_fp3$cluster <- factor(km_fp3$cluster)   # <- Aquí se crea la columna
+
+library(rpart)
+library(rpart.plot)
+
+modelo_fp3 <- rpart(
+  formula = cluster ~ eva_mn + sexo_per_eva + g_edad_80ymas + depto_ocu + dia_sem_ocu + mes_ocu,
+  data = data_fp3,
+  method = "class"
+)
+
+rpart.plot(
+  modelo_fp3,
+  box.palette = "RdYlGn",
+  type = 2,
+  extra = 104,
+  under = TRUE,
+  faclen = 0,
+  main = "Árbol de decisión: Clústeres FP3 (Necropsias)"
+)
+
+```
+
+####Situación 4:
+
+```{r}
+
+# Seleccionar columnas relevantes: grupos de edad + secuestros
+campos_fp1 <- c("DELITOS-CONTRA-LIBERTAD-Por grupo_menor_de_15",
+                "DELITOS-CONTRA-LIBERTAD-Por grupo_x15_19",
+                "DELITOS-CONTRA-LIBERTAD-Por grupo_x20_24",
+                "DELITOS-CONTRA-LIBERTAD-Por grupo_x25_29",
+                "DELITOS-CONTRA-LIBERTAD-Por grupo_x30_34",
+                "DELITOS-CONTRA-LIBERTAD-Por grupo_x35_39",
+                "DELITOS-CONTRA-LIBERTAD-Por grupo_x40_44",
+                "DELITOS-CONTRA-LIBERTAD-Por grupo_x45_49",
+                "DELITOS-CONTRA-LIBERTAD-Por grupo_x50_54",
+                "DELITOS-CONTRA-LIBERTAD-Por grupo_x55_59",
+                "DELITOS-CONTRA-LIBERTAD-Por grupo_x60_y_mas",
+                "DELITOS-CONTRA-LIBERTAD-Por  tipo_secuestros")
+
+data_fp1 <- datos_fuente1[, campos_fp1]
+
+# Convertir a numérico
+data_fp1[] <- lapply(data_fp1, function(x) as.numeric(as.character(x)))
+
+# Crear variable objetivo: nivel de secuestros (Alto/Bajo según mediana)
+umbral <- median(data_fp1$`DELITOS-CONTRA-LIBERTAD-Por  tipo_secuestros`, na.rm = TRUE)
+data_fp1$objetivo <- ifelse(data_fp1$`DELITOS-CONTRA-LIBERTAD-Por  tipo_secuestros` > umbral,
+                            "Alto", "Bajo")
+data_fp1$objetivo <- factor(data_fp1$objetivo)
+
+# Construir árbol de decisión usando SOLO grupos de edad
+modelo_fp1 <- rpart(
+  formula = objetivo ~ `DELITOS-CONTRA-LIBERTAD-Por grupo_menor_de_15` +
+                      `DELITOS-CONTRA-LIBERTAD-Por grupo_x15_19` +
+                      `DELITOS-CONTRA-LIBERTAD-Por grupo_x20_24` +
+                      `DELITOS-CONTRA-LIBERTAD-Por grupo_x25_29` +
+                      `DELITOS-CONTRA-LIBERTAD-Por grupo_x30_34` +
+                      `DELITOS-CONTRA-LIBERTAD-Por grupo_x35_39` +
+                      `DELITOS-CONTRA-LIBERTAD-Por grupo_x40_44` +
+                      `DELITOS-CONTRA-LIBERTAD-Por grupo_x45_49` +
+                      `DELITOS-CONTRA-LIBERTAD-Por grupo_x50_54` +
+                      `DELITOS-CONTRA-LIBERTAD-Por grupo_x55_59` +
+                      `DELITOS-CONTRA-LIBERTAD-Por grupo_x60_y_mas`,
+  data = data_fp1,
+  method = "class",
+  control = rpart.control(minsplit = 5, cp = 0.001)
+)
+
+# Graficar árbol
+rpart.plot(
+  modelo_fp1,
+  box.palette = "Blues",
+  type = 2,
+  extra = 104,
+  under = TRUE,
+  faclen = 0,
+  main = "Árbol de decisión: Grupo de edad vs Secuestros"
+)
+
+```
