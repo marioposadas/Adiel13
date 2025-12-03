@@ -1,0 +1,35 @@
+##BOSQUES ALEATORIOS
+####Situación 1
+```{r}
+# Cargar librería
+library(randomForest)
+
+# 1. Crear variable binaria objetivo:
+# 1 = muerte por neumonía (eva_mn == 1), 0 = otro caso
+datos_fuente3$muerte_politraumatismo <- ifelse(datos_fuente3$eva_mn == 37, 1, 0)
+datos_fuente3$muerte_politraumatismo <- as.factor(datos_fuente3$muerte_politraumatismo)
+
+# 2. Entrenar Random Forest con todos los campos excepto identificador y eva_mn
+set.seed(123) # reproducibilidad
+modelo_rf1 <- randomForest(muerte_politraumatismo ~ .,
+                          data = datos_fuente3[, !(names(datos_fuente3) %in% c("num_corre", "eva_mn"))],
+                          ntree = 200,       # número de árboles
+                          importance = TRUE)
+
+# 3. Resultados básicos
+print(modelo_rf1)
+
+# 4. Importancia de variables
+varImpPlot(modelo_rf1, main = "Importancia de variables en muerte por traumatismo")
+
+# 5. Predicciones con probabilidades
+predicciones_prob <- predict(modelo_rf1, datos_fuente3, type = "prob")
+head(predicciones_prob)
+
+# 6. Matriz de confusión
+predicciones_clase <- predict(modelo_rf1, datos_fuente3, type = "response")
+table(Predicho = predicciones_clase, Real = datos_fuente3$muerte_politraumatismo)
+
+
+# 7. Grafica
+plot(modelo_rf1)
