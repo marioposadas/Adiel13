@@ -1,0 +1,572 @@
+---
+#title: "Proyecto - Parte 2"
+##author: "Mario A. Posadas"
+---
+
+## Librerías necesarias
+
+```{r}
+library(readxl)
+library(dplyr)
+library(janitor) 
+library(DT)
+library(stringi)
+library(stringr)
+library(arules)
+library(tidyr)
+library(purrr)
+library(arulesViz)
+library(ggplot2)
+library(dplyr)
+library(randomForest)
+library(rpart)
+library(rpart.plot)
+library(genero)
+library(arules)
+```
+
+## Repositorio
+
+### Fuente 1 - Hechos delictivos INE
+
+```{r}
+ruta <- "D:/Desktop/Maestría Ciencias de la Computación/IV TRIMESTRE/Introducción a la minería de datos/Proyecto/Repositorio/FUENTE1-INE-HECHOS-DELICTIVOS/DELITOS-CONTRA-LIBERTAD-PNC"
+archivos <- list.files(path = ruta, pattern = "\\.xlsx$", full.names = TRUE)
+
+```
+
+###### Renombramiento de columnas que tengan en común Año
+
+```{r}
+leer_con_prefijo <- function(archivo) {
+  df <- read_excel(archivo, skip = 2)
+  df <- clean_names(df)  # Limpia nombres 
+  if (!"ano" %in% names(df)) {
+    names(df)[1] <- "ano"
+  }
+  prefijo <- tools::file_path_sans_ext(basename(archivo))
+  otras_cols <- setdiff(names(df), "ano")
+  names(df)[names(df) != "ano"] <- paste0(prefijo, "_", otras_cols)
+  return(df)
+}
+
+```
+
+###### Lectura de todos los archivos
+
+```{r}
+lista_datos <- lapply(archivos, leer_con_prefijo)
+```
+
+###### Unión por año
+
+```{r}
+datos_fuente1 <- Reduce(function(x, y) full_join(x, y, by = "ano"), lista_datos)
+```
+
+###### Verificación de archivos cargados
+
+```{r}
+glimpse(datos_fuente1)
+```
+###### Vista resumida en tabla de la información cargada
+
+```{r}
+ver_tabla <- function(data, filas = 10) {
+  if (!requireNamespace("DT", quietly = TRUE)) {
+    install.packages("DT")
+  }
+  library(DT)
+  
+  datatable(
+    data,
+    options = list(pageLength = filas, scrollX = TRUE),
+    rownames = FALSE
+  )
+}
+ver_tabla(datos_fuente1)
+```
+### Fuente 2 - Médico Legal INACIF
+
+```{r}
+# Ruta del directorio FUENTE2
+ruta_fuente2 <- "D:/Desktop/Maestría Ciencias de la Computación/IV TRIMESTRE/Introducción a la minería de datos/Proyecto/Repositorio/FUENTE2-MEDICO-LEGAL-INACIF"
+
+# Listar todos los archivos Excel
+archivos_fuente2 <- list.files(path = ruta_fuente2, pattern = "\\.xlsx$", full.names = TRUE)
+```
+
+###### Limpieza y orden de la información
+
+```{r}
+# Si existieran datos por limpiar:
+leer_fuente2 <- function(archivo) {
+  df <- read_excel(archivo)
+  df <- clean_names(df)  # Limpia nombres: sin tildes, espacios, mayúsculas
+  
+  # Si el archivo tiene eva_ml y sexo_per_eva, renombrarlos para unificar:
+  if ("eva_ml" %in% names(df)) {
+    df <- df %>% rename(clasif_eval = eva_ml)
+  }
+  if ("sexo_per_eva" %in% names(df)) {
+    df <- df %>% rename(sexo_per = sexo_per_eva)
+  }
+  
+  # Agregar columna con nombre del archivo
+  df <- df %>% mutate(fuente = basename(archivo))
+  
+  return(df)
+}
+
+# Leer y apilar todos los archivos
+datos_fuente2 <- bind_rows(lapply(archivos_fuente2, leer_fuente2))
+```
+
+###### Verificar estructura
+
+```{r}
+glimpse(datos_fuente2)
+```
+
+### Fuente 3 - Médico Necropcia INACIF
+
+```{r}
+# Ruta del directorio FUENTE3
+ruta_fuente3 <- "D:/Desktop/Maestría Ciencias de la Computación/IV TRIMESTRE/Introducción a la minería de datos/Proyecto/Repositorio/FUENTE3-MEDICO-NECROPCIA-INACIF"
+
+# Listar todos los archivos Excel
+archivos_fuente3 <- list.files(path = ruta_fuente3, pattern = "\\.xlsx$", full.names = TRUE)
+
+# Extraer nombres de columna por archivo
+nombres_df <- lapply(archivos_fuente3, function(archivo) {
+  nombres <- names(read_excel(archivo, n_max = 0))
+  data.frame(
+    archivo = basename(archivo),
+    columna = nombres,
+    stringsAsFactors = FALSE
+  )
+}) %>% bind_rows()
+
+# Mostrar como tabla
+print(nombres_df)
+
+# Función para normalizar nombres de columna
+normalizar_nombres <- function(nombres) {
+  nombres %>%
+    stri_trans_general("Latin-ASCII") %>%       # Elimina tildes
+    str_replace_all("ñ", "n") %>%               # Reemplaza ñ por n
+    str_replace_all("[\\p{P}-[_]]+", "") %>%    # Elimina puntuación excepto _
+    str_replace_all("\\s+", "_") %>%            # Reemplaza espacios por _
+    tolower()                                   # Minúsculas
+}
+
+# Función para renombrar columnas específicas
+unificar_nombres <- function(nombres) {
+  reemplazos <- c(
+    "causa_muerte" = "eva_mn",
+    "ano_ing" = "ano_ocu",
+    "mes_ing" = "mes_ocu",
+    "dia_ing" = "dia_ocu",
+    "dia_sem_ing" = "dia_sem_ocu",
+    "sexo_per" = "sexo_per_eva"
+  )
+  ifelse(nombres %in% names(reemplazos), reemplazos[nombres], nombres)
+}
+
+```
+
+  
+  
+###### Dentro de esta fuente se ha indentificado que en el año 2024 existe una columna 'g_edad_ninez_adolescencia', de la cual no se tienen registros de años anterior, por lo cual se excluye al no ser data significativa para comparación.
+
+```{r}
+# Función para leer y normalizar columnas, excluyendo g_edad_ninez_adolescencia
+leer_fuente3 <- function(archivo) {
+  df <- read_excel(archivo)
+  
+  nombres_originales <- names(df)
+  nombres_normalizados <- normalizar_nombres(nombres_originales)
+  
+  # Asignar nombres normalizados temporalmente
+  names(df) <- nombres_normalizados
+  
+  # Excluir columna ya normalizada
+  if ("g_edad_ninez_adolescencia" %in% names(df)) {
+    df <- df %>% select(-g_edad_ninez_adolescencia)
+    nombres_normalizados <- names(df)  # Actualizar nombres tras exclusión
+  }
+
+  
+  # Renombrar según mapeo
+  nombres_unificados <- unificar_nombres(nombres_normalizados)
+  
+  # Verificar duplicados post-renombramiento
+  if (any(duplicated(nombres_unificados))) {
+    duplicados <- nombres_unificados[duplicated(nombres_unificados)]
+    warning("Columnas duplicadas tras renombrar en ", basename(archivo), ": ",
+            paste(duplicados, collapse = ", "))
+    
+    nombres_unificados <- make.unique(nombres_unificados, sep = "_dup")
+  }
+  
+  names(df) <- nombres_unificados
+  
+  # Agregar columna de procedencia
+  df <- df %>% mutate(fuente = basename(archivo))
+  
+  return(df)
+}
+
+# Leer todos los archivos
+lista_fuente3 <- lapply(archivos_fuente3, leer_fuente3)
+
+# Unificar columnas presentes en al menos uno de los archivos
+todas_columnas <- unique(unlist(lapply(lista_fuente3, names)))
+
+# Alinear columnas en todos los dataframes
+alinear_columnas <- function(df, columnas_objetivo) {
+  faltantes <- setdiff(columnas_objetivo, names(df))
+  for (col in faltantes) {
+    df[[col]] <- NA
+  }
+  df <- df[, columnas_objetivo]
+  return(df)
+}
+
+# Aplicar alineación
+datos_fuente3 <- bind_rows(lapply(lista_fuente3, function(df) alinear_columnas(df, todas_columnas)))
+
+# Verificar estructura final
+glimpse(datos_fuente3)
+```
+
+### Fuente 4 - Médico Exhumación INACIF
+
+```{r}
+# Ruta del directorio FUENTE4
+ruta_fuente4 <- "D:/Desktop/Maestría Ciencias de la Computación/IV TRIMESTRE/Introducción a la minería de datos/Proyecto/Repositorio/FUENTE4-MEDICO-EXHUMACION-INACIF"
+
+# Listar todos los archivos Excel
+archivos_fuente4 <- list.files(path = ruta_fuente4, pattern = "\\.xlsx$", full.names = TRUE)
+
+# Extraer nombres de columna por archivo
+titulos_fuente4 <- lapply(archivos_fuente4, function(archivo) {
+  nombres <- names(read_excel(archivo, n_max = 0))  # Solo lee encabezados
+  data.frame(
+    archivo = basename(archivo),
+    columna = nombres,
+    stringsAsFactors = FALSE
+  )
+}) %>% bind_rows()
+
+# Mostrar resultados de nombres de columnas
+titulos_fuente4 %>%
+  group_by(archivo) %>%
+  summarise(titulos = paste(columna, collapse = ", ")) %>%
+  print(width = Inf)
+
+
+# Función para normalizar nombres de columna
+normalizar_nombres <- function(nombres) {
+  nombres %>%
+    stri_trans_general("Latin-ASCII") %>%       # Elimina tildes
+    str_replace_all("ñ", "n") %>%               # Reemplaza ñ por n
+    str_replace_all("[\\p{P}-[_]]+", "") %>%    # Elimina puntuación excepto _
+    str_replace_all("\\s+", "_") %>%            # Reemplaza espacios por _
+    tolower()
+}
+
+# Leer encabezados normalizados por archivo
+encabezados_fuente4 <- lapply(archivos_fuente4, function(archivo) {
+  nombres <- names(read_excel(archivo, n_max = 0))
+  normalizados <- normalizar_nombres(nombres)
+  return(normalizados)
+})
+
+# Detectar columnas comunes entre todos los archivos
+columnas_comunes <- Reduce(intersect, encabezados_fuente4)
+
+# Para los años 2019 y 2024 existen columnas adicionales que no coinciden con el formato del resto, se incluyen solo las que encuentre en común
+
+# Función para leer solo columnas comunes
+leer_fuente4 <- function(archivo, columnas_objetivo) {
+  df <- read_excel(archivo)
+  names(df) <- normalizar_nombres(names(df))
+  df <- df %>% select(any_of(columnas_objetivo))
+  df <- df %>% mutate(fuente = basename(archivo))
+  return(df)
+}
+
+# Leer todos los archivos con columnas comunes
+datos_fuente4 <- lapply(archivos_fuente4, leer_fuente4, columnas_objetivo = columnas_comunes) %>%
+  bind_rows()
+
+# Verificar estructura final
+glimpse(datos_fuente4)
+
+```
+##PREDICCIONES POR ÁRBOL DE DECISIÓN
+####Situación 1
+```{r}
+library(rpart)
+library(rpart.plot)
+
+modelo_f2 <- rpart(
+  formula = clasif_eval ~ sexo_per + dia_sem_ocu + depto_ocu + g_edad_80ymas,
+  data = datos_fuente2,
+  method = "class"
+)
+
+rpart.plot(modelo_f2)
+```
+
+
+####Situación 2
+```{r}
+
+
+# Filtrar casos válidos
+tabla_filtrada <- datos_fuente2 %>%
+  filter(clasif_eval >= 21 & clasif_eval <= 30,
+         dia_ocu == 3,
+         edad_quinquenales < 900,
+         depto_ocu < 900)
+
+# Convertir clasif_eval a factor para clasificación multiclase
+tabla_filtrada$clasif_eval <- as.factor(tabla_filtrada$clasif_eval)
+
+# Árbol de decisión
+modelo_clasif_eval <- rpart(
+  formula = clasif_eval ~ edad_quinquenales + depto_ocu + sexo_per,
+  data = tabla_filtrada,
+  method = "class"
+)
+
+# Visualización con paleta adecuada
+rpart.plot(
+  modelo_clasif_eval,
+  box.palette = "RdYlGn",       
+  type = 2,                    # Etiquetas en los nodos
+  extra = 104,                 # Muestra clase dominante y porcentaje
+  under = TRUE,                # Muestra condiciones debajo del nodo
+  faclen = 0,                  # Muestra etiquetas completas
+  main = "Árbol de decisión: Clasificación médico legal (día miércoles)"
+)
+```
+
+####Situación 3
+```{r}
+campos_cluster <- c("eva_mn", "sexo_per_eva", "g_edad_80ymas", "depto_ocu", "dia_sem_ocu","mes_ocu")
+data_fp3 <- datos_fuente3[, campos_cluster]
+
+# Convertir a numérico si faltara
+data_fp3[] <- lapply(data_fp3, function(x) {
+  if (is.character(x) || is.factor(x)) {
+    as.numeric(as.factor(x))
+  } else {
+    as.numeric(x)
+  }
+})
+
+# Filtrar valores ignorados y NA
+data_fp3 <- data_fp3 %>%
+  filter(eva_mn < 900, depto_ocu < 90) %>%
+  na.omit()
+
+set.seed(123)
+data_scaled <- scale(data_fp3)
+
+km_fp3 <- kmeans(data_scaled, centers = 4)
+data_fp3$cluster <- factor(km_fp3$cluster)   # <- Aquí se crea la columna
+
+library(rpart)
+library(rpart.plot)
+
+modelo_fp3 <- rpart(
+  formula = cluster ~ eva_mn + sexo_per_eva + g_edad_80ymas + depto_ocu + dia_sem_ocu + mes_ocu,
+  data = data_fp3,
+  method = "class"
+)
+
+rpart.plot(
+  modelo_fp3,
+  box.palette = "RdYlGn",
+  type = 2,
+  extra = 104,
+  under = TRUE,
+  faclen = 0,
+  main = "Árbol de decisión: Clústeres FP3 (Necropsias)"
+)
+
+```
+
+####Situación 4:
+
+```{r}
+
+# Seleccionar columnas relevantes: grupos de edad + secuestros
+campos_fp1 <- c("DELITOS-CONTRA-LIBERTAD-Por grupo_menor_de_15",
+                "DELITOS-CONTRA-LIBERTAD-Por grupo_x15_19",
+                "DELITOS-CONTRA-LIBERTAD-Por grupo_x20_24",
+                "DELITOS-CONTRA-LIBERTAD-Por grupo_x25_29",
+                "DELITOS-CONTRA-LIBERTAD-Por grupo_x30_34",
+                "DELITOS-CONTRA-LIBERTAD-Por grupo_x35_39",
+                "DELITOS-CONTRA-LIBERTAD-Por grupo_x40_44",
+                "DELITOS-CONTRA-LIBERTAD-Por grupo_x45_49",
+                "DELITOS-CONTRA-LIBERTAD-Por grupo_x50_54",
+                "DELITOS-CONTRA-LIBERTAD-Por grupo_x55_59",
+                "DELITOS-CONTRA-LIBERTAD-Por grupo_x60_y_mas",
+                "DELITOS-CONTRA-LIBERTAD-Por  tipo_secuestros")
+
+data_fp1 <- datos_fuente1[, campos_fp1]
+
+# Convertir a numérico
+data_fp1[] <- lapply(data_fp1, function(x) as.numeric(as.character(x)))
+
+# Crear variable objetivo: nivel de secuestros (Alto/Bajo según mediana)
+umbral <- median(data_fp1$`DELITOS-CONTRA-LIBERTAD-Por  tipo_secuestros`, na.rm = TRUE)
+data_fp1$objetivo <- ifelse(data_fp1$`DELITOS-CONTRA-LIBERTAD-Por  tipo_secuestros` > umbral,
+                            "Alto", "Bajo")
+data_fp1$objetivo <- factor(data_fp1$objetivo)
+
+# Construir árbol de decisión usando SOLO grupos de edad
+modelo_fp1 <- rpart(
+  formula = objetivo ~ `DELITOS-CONTRA-LIBERTAD-Por grupo_menor_de_15` +
+                      `DELITOS-CONTRA-LIBERTAD-Por grupo_x15_19` +
+                      `DELITOS-CONTRA-LIBERTAD-Por grupo_x20_24` +
+                      `DELITOS-CONTRA-LIBERTAD-Por grupo_x25_29` +
+                      `DELITOS-CONTRA-LIBERTAD-Por grupo_x30_34` +
+                      `DELITOS-CONTRA-LIBERTAD-Por grupo_x35_39` +
+                      `DELITOS-CONTRA-LIBERTAD-Por grupo_x40_44` +
+                      `DELITOS-CONTRA-LIBERTAD-Por grupo_x45_49` +
+                      `DELITOS-CONTRA-LIBERTAD-Por grupo_x50_54` +
+                      `DELITOS-CONTRA-LIBERTAD-Por grupo_x55_59` +
+                      `DELITOS-CONTRA-LIBERTAD-Por grupo_x60_y_mas`,
+  data = data_fp1,
+  method = "class",
+  control = rpart.control(minsplit = 5, cp = 0.001)
+)
+
+# Graficar árbol
+rpart.plot(
+  modelo_fp1,
+  box.palette = "Blues",
+  type = 2,
+  extra = 104,
+  under = TRUE,
+  faclen = 0,
+  main = "Árbol de decisión: Grupo de edad vs Secuestros"
+)
+
+```
+##BOSQUES ALEATORIOS
+####Situación 1
+```{r}
+# Cargar librería
+library(randomForest)
+
+# 1. Crear variable binaria objetivo:
+# 1 = muerte por neumonía (eva_mn == 1), 0 = otro caso
+datos_fuente3$muerte_politraumatismo <- ifelse(datos_fuente3$eva_mn == 37, 1, 0)
+datos_fuente3$muerte_politraumatismo <- as.factor(datos_fuente3$muerte_politraumatismo)
+
+# 2. Entrenar Random Forest con todos los campos excepto identificador y eva_mn
+set.seed(123) # reproducibilidad
+modelo_rf1 <- randomForest(muerte_politraumatismo ~ .,
+                          data = datos_fuente3[, !(names(datos_fuente3) %in% c("num_corre", "eva_mn"))],
+                          ntree = 200,       # número de árboles
+                          importance = TRUE)
+
+# 3. Resultados básicos
+print(modelo_rf1)
+
+# 4. Importancia de variables
+varImpPlot(modelo_rf1, main = "Importancia de variables en muerte por traumatismo")
+
+# 5. Predicciones con probabilidades
+predicciones_prob <- predict(modelo_rf1, datos_fuente3, type = "prob")
+head(predicciones_prob)
+
+# 6. Matriz de confusión
+predicciones_clase <- predict(modelo_rf1, datos_fuente3, type = "response")
+table(Predicho = predicciones_clase, Real = datos_fuente3$muerte_politraumatismo)
+
+
+# 7. Grafica
+plot(modelo_rf1)
+```
+
+####Situación 2
+
+```{r}
+# 1. Definir objetivo multiclase: departamento
+datos_fuente3$departamento <- as.factor(datos_fuente3$depto_ocu)
+
+# 2. Entrenar Random Forest SIN 'mupio_ocu' ni identificador ni eva_mn
+set.seed(123)
+modelo_rf_depto2 <- randomForest(departamento ~ .,
+                                 data = datos_fuente3[, !(names(datos_fuente3) %in% c("num_corre", "eva_mn", "mupio_ocu"))],
+                                 ntree = 200,
+                                 importance = TRUE)
+
+# 3. Resultados básicos
+print(modelo_rf_depto2)
+
+# 4. Importancia de variables
+varImpPlot(modelo_rf_depto2, main = "Importancia de variables en clasificación por departamento (sin municipio)")
+
+# 5. Matriz de confusión
+pred_depto2 <- predict(modelo_rf_depto2, datos_fuente3, type = "response")
+table(Predicho = pred_depto2, Real = datos_fuente3$departamento)
+
+# 6. Error OOB
+plot(modelo_rf_depto2)
+```
+
+####Situación 3:
+```{r}
+library(randomForest)
+
+# 1. Filtrar mayores de 65 años (excluyendo códigos inválidos como 999)
+datos_mayores65 <- subset(datos_fuente3, edad_per >= 65 & edad_per != 999)
+
+# 2. Crear variable de grupo quinquenal explícito
+datos_mayores65$grupo_quinquenal <- cut(
+  datos_mayores65$edad_per,
+  breaks = c(65, 70, 75, 80, 85, Inf),
+  labels = c("65-69", "70-74", "75-79", "80-84", "85+"),
+  right = FALSE
+)
+
+# 3. Segmentar eva_mn en causas específicas
+datos_mayores65$causa_segmentada <- NA
+datos_mayores65$causa_segmentada[datos_mayores65$eva_mn == 27] <- "Neumonia"
+datos_mayores65$causa_segmentada[datos_mayores65$eva_mn == 22] <- "Infarto"
+
+# 4. Filtrar solo registros con causas segmentadas
+datos_mayores65 <- subset(datos_mayores65, !is.na(causa_segmentada))
+datos_mayores65$causa_segmentada <- as.factor(datos_mayores65$causa_segmentada)
+
+# 5. Entrenar el bosque aleatorio
+modelo_rf_segmentado <- randomForest(
+  formula = causa_segmentada ~ grupo_quinquenal + sexo_per_eva + depto_ocu + mupio_ocu,
+  data = datos_mayores65,
+  ntree = 200,
+  importance = TRUE
+)
+
+# 6. Resultados del modelo
+print(modelo_rf_segmentado)
+
+# 7. Importancia de variables
+varImpPlot(modelo_rf_segmentado, main = "Importancia de variables en causas seleccionadas ≥65")
+
+# 8. Matriz de confusión
+pred_segmentado <- predict(modelo_rf_segmentado, datos_mayores65, type = "response")
+table(Predicho = pred_segmentado, Real = datos_mayores65$causa_segmentada)
+
+# 9. Evolución del error OOB
+plot(modelo_rf_segmentado)
+```
+
+
